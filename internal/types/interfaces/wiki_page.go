@@ -153,6 +153,11 @@ type WikiPageService interface {
 	// merge targets server-side.
 	FindSimilarPages(ctx context.Context, kbID string, query string, pageTypes []string, limit int) ([]*types.WikiPageLite, error)
 
+	// GetByNormalizedTitle returns the canonical live entity/concept page
+	// whose case-folded, trimmed title exactly matches normalizedTitle.
+	// Deterministic title dedup uses it before the fuzzy LLM merge pass.
+	GetByNormalizedTitle(ctx context.Context, kbID string, normalizedTitle string) (*types.WikiPageLite, error)
+
 	// ListDistinctCategoryPaths returns the existing wiki folder paths (split
 	// into segments), capped at maxPaths. Used by wiki ingest's taxonomy
 	// planner as the pool of folders to reuse.
@@ -330,6 +335,10 @@ type WikiPageRepository interface {
 	// defaults to entity+concept. Used by the dedup pre-filter to
 	// surface candidate merge targets server-side.
 	FindSimilarPages(ctx context.Context, kbID string, query string, pageTypes []string, limit int) ([]*types.WikiPageLite, error)
+
+	// GetByNormalizedTitle returns one deterministic live entity/concept
+	// page matching a case-folded, trimmed title.
+	GetByNormalizedTitle(ctx context.Context, kbID string, normalizedTitle string) (*types.WikiPageLite, error)
 
 	// ListDistinctCategoryPaths returns the materialized paths of existing
 	// wiki folders (split into segments), capped at maxPaths. Used by the

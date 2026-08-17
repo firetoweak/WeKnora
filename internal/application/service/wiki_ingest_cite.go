@@ -114,6 +114,9 @@ func (s *wikiIngestService) extractCandidateSlugs(
 		return nil, nil, nil, fmt.Errorf("parse candidate slug JSON: %w", err)
 	}
 
+	result.Entities, result.Concepts = s.collapseExtractedByTitle(
+		ctx, kbID, result.Entities, result.Concepts,
+	)
 	result.Entities, result.Concepts = s.deduplicateExtractedBatch(
 		ctx, chatModel, kbID, result.Entities, result.Concepts,
 	)

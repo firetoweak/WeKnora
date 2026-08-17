@@ -627,13 +627,33 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				additionFailed bool
 				reduceErr      error
 			)
-			// Serialize same-slug read-modify-write across concurrent batches
-			// (standard mode). runs fn directly in Lite mode.
-			acquired, lockErr := s.withSlugLock(reduceCtx, payload.KnowledgeBaseID, slug, func() error {
-				changed, affectedType, additionFailed, reduceErr = s.reduceSlugUpdates(
-					reduceCtx, chatModel, payload.KnowledgeBaseID, slug, updates, payload.TenantID, batchCtx, kidToWikiSpan)
-				return reduceErr
-			})
+			runReduce := func() (bool, error) {
+				return s.withSlugLock(reduceCtx, payload.KnowledgeBaseID, slug, func() error {
+					changed, affectedType, additionFailed, reduceErr = s.reduceSlugUpdates(
+						reduceCtx, chatModel, payload.KnowledgeBaseID, slug, updates, payload.TenantID, batchCtx, kidToWikiSpan)
+					return reduceErr
+				})
+			}
+
+			// Same-title pages can carry different model-generated slugs. Take
+			// a title lock outside the existing slug lock so concurrent batches
+			// cannot both pass the create-time uniqueness check.
+			var acquired bool
+			var lockErr error
+			if titleKey := normalizedKnowledgePointTitle(updates); titleKey != "" {
+				titleAcquired, titleErr := s.withTitleLock(
+					reduceCtx, payload.KnowledgeBaseID, titleKey, func() error {
+						acquired, lockErr = runReduce()
+						return lockErr
+					},
+				)
+				if !titleAcquired {
+					acquired = false
+				}
+				lockErr = titleErr
+			} else {
+				acquired, lockErr = runReduce()
+			}
 			if lockErr != nil {
 				collectUnapplied(updates)
 				// ctx cancelled (batch timeout / shutdown) — stop quietly.
@@ -903,6 +923,20 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	return nil
 }
 
+// normalizedKnowledgePointTitle returns the exact-title lock key for one
+// reduce group. Summary/retract-only groups deliberately have no title lock.
+func normalizedKnowledgePointTitle(updates []SlugUpdate) string {
+	for _, update := range updates {
+		if update.Type != types.WikiPageTypeEntity && update.Type != types.WikiPageTypeConcept {
+			continue
+		}
+		if title := normalizeWikiTitle(update.Item.Name); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
 // ProcessWikiFinalize runs the debounced, per-KB KB-global convergence pass:
 // index-intro rebuild, dead-link cleanup, and cross-link injection. It drains
 // the finalize lane of task_pending_ops (written by ProcessWikiIngest via
@@ -1059,6 +1093,21 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	batchCtx := s.newWikiBatchContext(payload.KnowledgeBaseID, kb.WikiConfig)
 	lang := types.LanguageNameFromContext(ctx)
 
+	collapsedTitlePages, canonicalSlugs, collapseErr := s.collapseDuplicateTitlePages(
+		ctx, payload.KnowledgeBaseID,
+	)
+	if collapseErr != nil {
+		logger.Warnf(ctx, "wiki finalize: collapse duplicate titles failed: %v", collapseErr)
+	} else {
+		for _, slug := range canonicalSlugs {
+			if _, ok := affectedSet[slug]; ok {
+				continue
+			}
+			affectedSet[slug] = struct{}{}
+			affectedSlugs = append(affectedSlugs, slug)
+		}
+	}
+
 	indexRebuilt := false
 	if changeDesc.Len() > 0 && synthesisModelID != "" {
 		chatModel, mErr := s.modelService.GetChatModel(ctx, synthesisModelID)
@@ -1141,8 +1190,8 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	}
 
 	logger.Infof(ctx,
-		"wiki finalize: kb=%s rows=%d affected_slugs=%d deleted_folders=%d folder_prune_deferred=%v index_rebuilt=%v rescheduled=%v elapsed=%s",
-		payload.KnowledgeBaseID, len(rows), len(affectedSlugs), deletedFolders, pruneDeferred, indexRebuilt, rescheduled,
+		"wiki finalize: kb=%s rows=%d affected_slugs=%d collapsed_title_pages=%d deleted_folders=%d folder_prune_deferred=%v index_rebuilt=%v rescheduled=%v elapsed=%s",
+		payload.KnowledgeBaseID, len(rows), len(affectedSlugs), collapsedTitlePages, deletedFolders, pruneDeferred, indexRebuilt, rescheduled,
 		time.Since(startedAt).Round(time.Millisecond),
 	)
 	return nil
@@ -1364,6 +1413,9 @@ func (s *wikiIngestService) mapOneDocument(
 	// citations simply keep their Description+Details fallback).
 	var uncited int
 	extractedEntities, extractedConcepts, uncited = mergeCitationsIntoItems(extractedEntities, extractedConcepts, citations, newSlugs)
+	extractedEntities, extractedConcepts = s.collapseExtractedByTitle(
+		ctx, payload.KnowledgeBaseID, extractedEntities, extractedConcepts,
+	)
 
 	// Rebuild slugItems so stale entries (for slugs that did not survive the
 	// merge) and brand-new slugs discovered by the citation pass are both
@@ -1637,6 +1689,10 @@ func (s *wikiIngestService) extractEntitiesAndConceptsNoUpsert(
 		logger.Warnf(ctx, "wiki ingest: failed to parse combined extraction JSON: %v\nRaw: %s", err, extractionJSON)
 		return nil, nil, nil, fmt.Errorf("parse combined extraction JSON: %w", err)
 	}
+
+	result.Entities, result.Concepts = s.collapseExtractedByTitle(
+		ctx, kbID, result.Entities, result.Concepts,
+	)
 
 	// Dedup pre-filter is dispatched against the wiki page repo via
 	// pg_trgm (see deduplicateExtractedBatch). Until the trgm path

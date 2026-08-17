@@ -1,13 +1,137 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"sort"
 	"strings"
 	"unicode"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// normalizeWikiTitle defines deterministic title identity for generated
+// knowledge points. It intentionally preserves punctuation so distinct names
+// such as "C" and "C++" are never collapsed.
+func normalizeWikiTitle(title string) string {
+	return strings.ToLower(strings.Join(strings.Fields(title), " "))
+}
+
+// mergeExtractedItem combines provenance-bearing extraction fields without
+// replacing the canonical item's description or details.
+func mergeExtractedItem(dst *extractedItem, src extractedItem) {
+	if dst == nil {
+		return
+	}
+	if dst.Description == "" {
+		dst.Description = src.Description
+	}
+	if dst.Details == "" {
+		dst.Details = src.Details
+	}
+
+	aliases := make(map[string]bool, len(dst.Aliases)+len(src.Aliases)+1)
+	for _, alias := range dst.Aliases {
+		aliases[alias] = true
+	}
+	addAlias := func(alias string) {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || alias == dst.Name || aliases[alias] {
+			return
+		}
+		dst.Aliases = append(dst.Aliases, alias)
+		aliases[alias] = true
+	}
+	addAlias(src.Name)
+	for _, alias := range src.Aliases {
+		addAlias(alias)
+	}
+
+	chunks := make(map[string]bool, len(dst.SourceChunks)+len(src.SourceChunks))
+	for _, id := range dst.SourceChunks {
+		chunks[id] = true
+	}
+	for _, id := range src.SourceChunks {
+		if id != "" && !chunks[id] {
+			dst.SourceChunks = append(dst.SourceChunks, id)
+			chunks[id] = true
+		}
+	}
+}
+
+// collapseExtractedByTitle deterministically maps exact same-name knowledge
+// points to one slug. Existing pages win over newly generated slugs; otherwise
+// the first extracted item wins. Repository lookup failures are fail-open so
+// transient storage errors do not discard document ingestion, while the
+// create-time title guard remains the final persistence boundary.
+func (s *wikiIngestService) collapseExtractedByTitle(
+	ctx context.Context,
+	kbID string,
+	entities, concepts []extractedItem,
+) ([]extractedItem, []extractedItem) {
+	type groupedItem struct {
+		item extractedItem
+		kind string
+	}
+
+	order := make([]string, 0, len(entities)+len(concepts))
+	groups := make(map[string][]groupedItem, len(entities)+len(concepts))
+	add := func(item extractedItem, kind string) {
+		key := normalizeWikiTitle(item.Name)
+		if key == "" {
+			return
+		}
+		if _, exists := groups[key]; !exists {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], groupedItem{item: item, kind: kind})
+	}
+	for _, item := range entities {
+		add(item, types.WikiPageTypeEntity)
+	}
+	for _, item := range concepts {
+		add(item, types.WikiPageTypeConcept)
+	}
+
+	collapsedEntities := make([]extractedItem, 0, len(entities))
+	collapsedConcepts := make([]extractedItem, 0, len(concepts))
+	for _, key := range order {
+		group := groups[key]
+		if len(group) == 0 {
+			continue
+		}
+
+		winner := group[0].item
+		winnerKind := group[0].kind
+		if s.wikiService != nil {
+			existing, err := s.wikiService.GetByNormalizedTitle(ctx, kbID, key)
+			switch {
+			case err == nil && existing != nil:
+				winner.Slug = existing.Slug
+				winner.Name = existing.Title
+				winnerKind = existing.PageType
+				for _, alias := range []string(existing.Aliases) {
+					mergeExtractedItem(&winner, extractedItem{Aliases: []string{alias}})
+				}
+			case err != nil && !errors.Is(err, repository.ErrWikiPageNotFound):
+				logger.Warnf(ctx, "wiki ingest: exact-title lookup %q failed: %v", key, err)
+			}
+		}
+		for _, candidate := range group {
+			mergeExtractedItem(&winner, candidate.item)
+		}
+
+		if winnerKind == types.WikiPageTypeConcept {
+			collapsedConcepts = append(collapsedConcepts, winner)
+		} else {
+			collapsedEntities = append(collapsedEntities, winner)
+		}
+	}
+	return collapsedEntities, collapsedConcepts
+}
 
 // Pre-filtering candidate existing pages before the dedup LLM call.
 //

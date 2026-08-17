@@ -70,6 +70,45 @@ func TestStripWikiInlineChunkCitationsPreservesOrdinaryMarkdown(t *testing.T) {
 	}
 }
 
+func TestKnowledgePointTitleUniquenessOnCreateAndUpdate(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.WikiFolder{}, &types.WikiPage{}, &types.WikiPageRevision{}))
+
+	ctx := context.Background()
+	repo := repository.NewWikiPageRepository(db)
+	svc := NewWikiPageService(repo, nil, nil, nil, nil, nil)
+
+	first, err := svc.CreatePage(ctx, &types.WikiPage{
+		TenantID: 1, KnowledgeBaseID: "kb-title", Slug: "entity/rag",
+		Title: "RAG", Summary: "summary", Content: "content",
+		PageType: types.WikiPageTypeEntity,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.CreatePage(ctx, &types.WikiPage{
+		TenantID: 1, KnowledgeBaseID: "kb-title", Slug: "concept/other-rag",
+		Title: "  rag  ", Summary: "summary", Content: "content",
+		PageType: types.WikiPageTypeConcept,
+	})
+	require.ErrorContains(t, err, `already exists at slug "entity/rag"`)
+
+	other, err := svc.CreatePage(ctx, &types.WikiPage{
+		TenantID: 1, KnowledgeBaseID: "kb-title", Slug: "concept/other",
+		Title: "Other", Summary: "summary", Content: "content",
+		PageType: types.WikiPageTypeConcept,
+	})
+	require.NoError(t, err)
+	other.Title = "rag"
+	_, err = svc.UpdatePage(ctx, other)
+	require.ErrorContains(t, err, `already exists at slug "entity/rag"`)
+
+	// Updating the canonical page itself remains legal.
+	first.Summary = "updated"
+	_, err = svc.UpdatePage(ctx, first)
+	require.NoError(t, err)
+}
+
 func TestUpdateWikiPagePersistsAndClearsAliases(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
 	require.NoError(t, err)

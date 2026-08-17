@@ -25,6 +25,12 @@ func (s *folderPruneWikiServiceStub) PruneEmptyFolderChains(
 	return folderIDs, nil
 }
 
+func (s *folderPruneWikiServiceStub) ListAllPages(
+	context.Context, string,
+) ([]*types.WikiPage, error) {
+	return nil, nil
+}
+
 type folderPruneKBServiceStub struct {
 	interfaces.KnowledgeBaseService
 }

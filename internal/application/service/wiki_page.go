@@ -86,6 +86,9 @@ func (s *wikiPageService) CreatePage(ctx context.Context, page *types.WikiPage) 
 	if page.Version == 0 {
 		page.Version = 1
 	}
+	if err := s.ensureUniqueKnowledgePointTitle(ctx, page); err != nil {
+		return nil, err
+	}
 	page.LastEditSource = types.WikiEditSourceFromContext(ctx)
 	page.LastEditorID, _ = types.UserIDFromContext(ctx)
 	stripWikiPageInlineChunkCitations(page)
@@ -125,6 +128,9 @@ func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) 
 	existing, err := s.repo.GetBySlug(ctx, page.KnowledgeBaseID, page.Slug)
 	if err != nil {
 		return nil, fmt.Errorf("get existing page: %w", err)
+	}
+	if err := s.ensureUniqueKnowledgePointTitle(ctx, page); err != nil {
+		return nil, err
 	}
 	stripWikiPageInlineChunkCitations(page)
 
@@ -352,6 +358,32 @@ func (s *wikiPageService) GetPageBySlug(ctx context.Context, kbID string, slug s
 	}
 	stripWikiPageInlineChunkCitations(page)
 	return page, nil
+}
+
+// ensureUniqueKnowledgePointTitle prevents entity/concept pages with distinct
+// slugs from exposing the same human-readable title in one knowledge base.
+// Other page types use titles as presentation text and are intentionally
+// outside this invariant.
+func (s *wikiPageService) ensureUniqueKnowledgePointTitle(ctx context.Context, page *types.WikiPage) error {
+	if page == nil ||
+		(page.PageType != types.WikiPageTypeEntity && page.PageType != types.WikiPageTypeConcept) {
+		return nil
+	}
+	normalized := normalizeWikiTitle(page.Title)
+	if normalized == "" {
+		return nil
+	}
+	existing, err := s.repo.GetByNormalizedTitle(ctx, page.KnowledgeBaseID, normalized)
+	if errors.Is(err, repository.ErrWikiPageNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check wiki page title uniqueness: %w", err)
+	}
+	if existing != nil && existing.Slug != page.Slug {
+		return fmt.Errorf("wiki knowledge point title %q already exists at slug %q", page.Title, existing.Slug)
+	}
+	return nil
 }
 
 // GetPageByID retrieves a wiki page by its ID
@@ -981,6 +1013,12 @@ func (s *wikiPageService) ListByTypeRecent(ctx context.Context, kbID string, pag
 // dedup pre-filter to surface candidate merge targets.
 func (s *wikiPageService) FindSimilarPages(ctx context.Context, kbID string, query string, pageTypes []string, limit int) ([]*types.WikiPageLite, error) {
 	return s.repo.FindSimilarPages(ctx, kbID, query, pageTypes, limit)
+}
+
+// GetByNormalizedTitle returns the canonical live knowledge point with the
+// requested case-folded, trimmed title.
+func (s *wikiPageService) GetByNormalizedTitle(ctx context.Context, kbID string, normalizedTitle string) (*types.WikiPageLite, error) {
+	return s.repo.GetByNormalizedTitle(ctx, kbID, normalizedTitle)
 }
 
 // ListDistinctCategoryPaths returns the existing wiki folder paths. Used by

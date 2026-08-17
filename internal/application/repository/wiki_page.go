@@ -1055,6 +1055,81 @@ func (r *wikiPageRepository) FindSimilarPages(
 	return out, nil
 }
 
+// GetByNormalizedTitle returns the oldest live entity/concept page whose
+// lowercased, trimmed title exactly matches normalizedTitle. Oldest-first
+// makes the result stable while legacy duplicate titles are being converged
+// by the finalize pass.
+func (r *wikiPageRepository) GetByNormalizedTitle(
+	ctx context.Context,
+	kbID string,
+	normalizedTitle string,
+) (*types.WikiPageLite, error) {
+	normalizedTitle = strings.ToLower(strings.TrimSpace(normalizedTitle))
+	if normalizedTitle == "" {
+		return nil, ErrWikiPageNotFound
+	}
+
+	var page types.WikiPageLite
+	err := r.db.WithContext(ctx).
+		Model(&types.WikiPage{}).
+		Select("slug, title, page_type, status, aliases, out_links").
+		Where(
+			"knowledge_base_id = ? AND page_type IN ? AND status <> ? AND lower(trim(title)) = ?",
+			kbID,
+			[]string{types.WikiPageTypeEntity, types.WikiPageTypeConcept},
+			types.WikiPageStatusArchived,
+			normalizedTitle,
+		).
+		Order("created_at ASC").
+		Order("id ASC").
+		Take(&page).Error
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+
+		// Generated titles almost never contain repeated internal whitespace,
+		// so keep the exact path above fast. This portable fallback
+		// handles legacy tabs/newlines/multiple spaces by selecting a narrow
+		// ordered LIKE candidate set and applying the exact Go normalizer.
+		tokens := strings.Fields(normalizedTitle)
+		if len(tokens) == 0 {
+			return nil, ErrWikiPageNotFound
+		}
+		escaped := make([]string, len(tokens))
+		for i, token := range tokens {
+			token = strings.ReplaceAll(token, `\`, `\\`)
+			token = strings.ReplaceAll(token, `%`, `\%`)
+			token = strings.ReplaceAll(token, `_`, `\_`)
+			escaped[i] = token
+		}
+		pattern := strings.Join(escaped, "%")
+		var candidates []types.WikiPageLite
+		if fallbackErr := r.db.WithContext(ctx).
+			Model(&types.WikiPage{}).
+			Select("slug, title, page_type, status, aliases, out_links").
+			Where(
+				"knowledge_base_id = ? AND page_type IN ? AND status <> ? AND lower(trim(title)) LIKE ? ESCAPE '\\'",
+				kbID,
+				[]string{types.WikiPageTypeEntity, types.WikiPageTypeConcept},
+				types.WikiPageStatusArchived,
+				pattern,
+			).
+			Order("created_at ASC").
+			Order("id ASC").
+			Scan(&candidates).Error; fallbackErr != nil {
+			return nil, fallbackErr
+		}
+		for i := range candidates {
+			if strings.ToLower(strings.Join(strings.Fields(candidates[i].Title), " ")) == normalizedTitle {
+				return &candidates[i], nil
+			}
+		}
+		return nil, ErrWikiPageNotFound
+	}
+	return &page, nil
+}
+
 // ListAll retrieves all non-archived wiki pages in a knowledge base.
 func (r *wikiPageRepository) ListAll(ctx context.Context, kbID string) ([]*types.WikiPage, error) {
 	var pages []*types.WikiPage

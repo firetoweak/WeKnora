@@ -108,6 +108,40 @@ func setupWikiPagesTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func TestGetByNormalizedTitle(t *testing.T) {
+	db := setupWikiPagesTestDB(t)
+	repo := NewWikiPageRepository(db)
+	ctx := context.Background()
+
+	require.NoError(t, repo.Create(ctx, &types.WikiPage{
+		ID:              "page-entity",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		Slug:            "entity/rag",
+		Title:           "  RAG \t System  ",
+		PageType:        types.WikiPageTypeEntity,
+		Status:          types.WikiPageStatusPublished,
+		Version:         1,
+	}))
+	require.NoError(t, repo.Create(ctx, &types.WikiPage{
+		ID:              "page-summary",
+		TenantID:        1,
+		KnowledgeBaseID: "kb-1",
+		Slug:            "summary/rag",
+		Title:           "RAG",
+		PageType:        types.WikiPageTypeSummary,
+		Status:          types.WikiPageStatusPublished,
+		Version:         1,
+	}))
+
+	got, err := repo.GetByNormalizedTitle(ctx, "kb-1", "rag system")
+	require.NoError(t, err)
+	assert.Equal(t, "entity/rag", got.Slug)
+
+	_, err = repo.GetByNormalizedTitle(ctx, "kb-1", "missing")
+	require.ErrorIs(t, err, ErrWikiPageNotFound)
+}
+
 // makeWikiPage builds a minimal WikiPage suitable for insert. Title is
 // derived from the slug so ORDER BY title ASC yields a predictable
 // test ordering without callers having to spell out both fields.
