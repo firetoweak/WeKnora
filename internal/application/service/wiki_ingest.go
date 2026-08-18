@@ -59,9 +59,6 @@ const (
 	// page (entity/concept/summary/index) so two concurrent batches for the
 	// same KB can't lost-update the same slug. Key: wiki:slug:{kbID}:{slug}.
 	wikiSlugLockPrefix = "wiki:slug:"
-	// wikiTitleLockPrefix serializes creation attempts for exact same-name
-	// entity/concept pages whose generated slugs differ.
-	wikiTitleLockPrefix = "wiki:title:"
 	// wikiSlugLockTTL bounds the per-slug lock so a crashed reducer can't
 	// wedge a hot page forever. Comfortably longer than a single reduce
 	// (one LLM modify call).
@@ -884,36 +881,6 @@ func (s *wikiIngestService) withSlugLock(ctx context.Context, kbID, slug string,
 		ok, rerr := s.redisClient.SetNX(ctx, key, "1", wikiSlugLockTTL).Result()
 		if rerr != nil {
 			logger.Warnf(ctx, "wiki reduce: slug lock SetNX failed for %s: %v (running unlocked)", slug, rerr)
-			return true, fn()
-		}
-		if ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			return false, nil
-		}
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-time.After(wikiSlugLockPoll):
-		}
-	}
-	defer s.redisClient.Del(context.Background(), key)
-	return true, fn()
-}
-
-// withTitleLock serializes exact same-name entity/concept creation across
-// concurrent batches. Lite mode is already serialized per KB.
-func (s *wikiIngestService) withTitleLock(ctx context.Context, kbID, normalizedTitle string, fn func() error) (bool, error) {
-	if s.redisClient == nil || normalizedTitle == "" {
-		return true, fn()
-	}
-	key := wikiTitleLockPrefix + kbID + ":" + normalizedTitle
-	deadline := time.Now().Add(wikiSlugLockWait)
-	for {
-		ok, rerr := s.redisClient.SetNX(ctx, key, "1", wikiSlugLockTTL).Result()
-		if rerr != nil {
-			logger.Warnf(ctx, "wiki reduce: title lock SetNX failed for %q: %v (running unlocked)", normalizedTitle, rerr)
 			return true, fn()
 		}
 		if ok {
@@ -2621,6 +2588,8 @@ func wikiPromptPurpose(promptTpl string) string {
 		return "wiki_taxonomy_plan"
 	case agent.WikiDeduplicationPrompt:
 		return "wiki_deduplication"
+	case agent.WikiExactTitleMergePrompt:
+		return "wiki_exact_title_merge"
 	case agent.WikiIndexIntroPrompt, agent.WikiIndexIntroUpdatePrompt:
 		return "wiki_index_intro"
 	default:

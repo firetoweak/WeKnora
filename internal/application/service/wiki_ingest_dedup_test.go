@@ -1,30 +1,11 @@
 package service
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
 
-	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
-	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
-
-type exactTitleWikiService struct {
-	interfaces.WikiPageService
-	pages map[string]*types.WikiPageLite
-}
-
-func (s *exactTitleWikiService) GetByNormalizedTitle(
-	_ context.Context, _ string, normalizedTitle string,
-) (*types.WikiPageLite, error) {
-	page := s.pages[normalizedTitle]
-	if page == nil {
-		return nil, repository.ErrWikiPageNotFound
-	}
-	return page, nil
-}
 
 func TestNormalizeWikiTitle(t *testing.T) {
 	if got := normalizeWikiTitle("  Retrieval \t Augmented\nGeneration  "); got != "retrieval augmented generation" {
@@ -33,91 +14,6 @@ func TestNormalizeWikiTitle(t *testing.T) {
 	if normalizeWikiTitle("C++") == normalizeWikiTitle("C") {
 		t.Fatal("punctuation-bearing titles must remain distinct")
 	}
-}
-
-func TestCollapseExtractedByTitle_BatchDuplicate(t *testing.T) {
-	svc := &wikiIngestService{wikiService: &exactTitleWikiService{}}
-	entities, concepts := svc.collapseExtractedByTitle(
-		context.Background(),
-		"kb-1",
-		[]extractedItem{
-			{Name: "RAG", Slug: "entity/rag-a", Aliases: []string{"Retrieval-Augmented Generation"}, SourceChunks: []string{"c1"}},
-			{Name: " rag ", Slug: "entity/rag-b", Aliases: []string{"检索增强生成"}, SourceChunks: []string{"c2"}},
-		},
-		nil,
-	)
-
-	if len(concepts) != 0 || len(entities) != 1 {
-		t.Fatalf("got entities=%d concepts=%d, want one entity", len(entities), len(concepts))
-	}
-	got := entities[0]
-	if got.Slug != "entity/rag-a" {
-		t.Fatalf("winner slug = %q", got.Slug)
-	}
-	if strings.Join(got.SourceChunks, ",") != "c1,c2" {
-		t.Fatalf("source chunks = %v", got.SourceChunks)
-	}
-	if !containsTestString(got.Aliases, "检索增强生成") {
-		t.Fatalf("aliases were not merged: %v", got.Aliases)
-	}
-}
-
-func TestCollapseExtractedByTitle_ExistingPageWinsAcrossTypes(t *testing.T) {
-	existing := &types.WikiPageLite{
-		Slug:     "concept/rag",
-		Title:    "RAG",
-		PageType: types.WikiPageTypeConcept,
-		Aliases:  types.StringArray{"Retrieval-Augmented Generation"},
-	}
-	svc := &wikiIngestService{wikiService: &exactTitleWikiService{
-		pages: map[string]*types.WikiPageLite{"rag": existing},
-	}}
-	entities, concepts := svc.collapseExtractedByTitle(
-		context.Background(),
-		"kb-1",
-		[]extractedItem{{Name: " rag ", Slug: "entity/generated-rag", SourceChunks: []string{"c1"}}},
-		nil,
-	)
-
-	if len(entities) != 0 || len(concepts) != 1 {
-		t.Fatalf("got entities=%d concepts=%d, want existing concept type", len(entities), len(concepts))
-	}
-	if concepts[0].Slug != existing.Slug || concepts[0].Name != existing.Title {
-		t.Fatalf("existing page did not win: %+v", concepts[0])
-	}
-}
-
-func TestCollapseExtractedByTitle_LookupFailureStillCollapsesBatch(t *testing.T) {
-	failing := &failingExactTitleWikiService{}
-	svc := &wikiIngestService{wikiService: failing}
-	entities, _ := svc.collapseExtractedByTitle(
-		context.Background(),
-		"kb-1",
-		[]extractedItem{{Name: "Same", Slug: "entity/a"}, {Name: "same", Slug: "entity/b"}},
-		nil,
-	)
-	if len(entities) != 1 {
-		t.Fatalf("transient lookup failure should still collapse batch, got %d", len(entities))
-	}
-}
-
-type failingExactTitleWikiService struct {
-	interfaces.WikiPageService
-}
-
-func (*failingExactTitleWikiService) GetByNormalizedTitle(
-	context.Context, string, string,
-) (*types.WikiPageLite, error) {
-	return nil, errors.New("database unavailable")
-}
-
-func containsTestString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func TestDedupMergeRejectReason(t *testing.T) {

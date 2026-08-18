@@ -13,8 +13,9 @@ import (
 
 type folderPruneWikiServiceStub struct {
 	interfaces.WikiPageService
-	calls     int
-	folderIDs []string
+	calls        int
+	listAllCalls int
+	folderIDs    []string
 }
 
 func (s *folderPruneWikiServiceStub) PruneEmptyFolderChains(
@@ -28,6 +29,7 @@ func (s *folderPruneWikiServiceStub) PruneEmptyFolderChains(
 func (s *folderPruneWikiServiceStub) ListAllPages(
 	context.Context, string,
 ) ([]*types.WikiPage, error) {
+	s.listAllCalls++
 	return nil, nil
 }
 
@@ -107,6 +109,7 @@ func TestProcessWikiFinalizeDefersFolderPruneWhileIngestIsPending(t *testing.T) 
 	}
 
 	require.NoError(t, svc.ProcessWikiFinalize(context.Background(), task))
+	require.Equal(t, 1, wikiSvc.listAllCalls, "finalize must scan wiki pages only once")
 	require.Zero(t, wikiSvc.calls, "must not prune a folder reserved by an in-flight ingest")
 	require.Empty(t, pendingRepo.deletedRowIDs, "durable prune row must remain for retry")
 	require.Equal(t, []string{types.TypeWikiFinalize}, taskQueue.enqueuedTypes)
@@ -122,6 +125,7 @@ func TestProcessWikiFinalizePrunesFolderAfterIngestDrains(t *testing.T) {
 	}
 
 	require.NoError(t, svc.ProcessWikiFinalize(context.Background(), task))
+	require.Equal(t, 1, wikiSvc.listAllCalls, "finalize must scan wiki pages only once")
 	require.Equal(t, 1, wikiSvc.calls)
 	require.Equal(t, []string{"folder-a"}, wikiSvc.folderIDs)
 	require.Equal(t, []int64{11}, pendingRepo.deletedRowIDs)

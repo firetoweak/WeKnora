@@ -635,25 +635,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				})
 			}
 
-			// Same-title pages can carry different model-generated slugs. Take
-			// a title lock outside the existing slug lock so concurrent batches
-			// cannot both pass the create-time uniqueness check.
-			var acquired bool
-			var lockErr error
-			if titleKey := normalizedKnowledgePointTitle(updates); titleKey != "" {
-				titleAcquired, titleErr := s.withTitleLock(
-					reduceCtx, payload.KnowledgeBaseID, titleKey, func() error {
-						acquired, lockErr = runReduce()
-						return lockErr
-					},
-				)
-				if !titleAcquired {
-					acquired = false
-				}
-				lockErr = titleErr
-			} else {
-				acquired, lockErr = runReduce()
-			}
+			acquired, lockErr := runReduce()
 			if lockErr != nil {
 				collectUnapplied(updates)
 				// ctx cancelled (batch timeout / shutdown) — stop quietly.
@@ -923,25 +905,11 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	return nil
 }
 
-// normalizedKnowledgePointTitle returns the exact-title lock key for one
-// reduce group. Summary/retract-only groups deliberately have no title lock.
-func normalizedKnowledgePointTitle(updates []SlugUpdate) string {
-	for _, update := range updates {
-		if update.Type != types.WikiPageTypeEntity && update.Type != types.WikiPageTypeConcept {
-			continue
-		}
-		if title := normalizeWikiTitle(update.Item.Name); title != "" {
-			return title
-		}
-	}
-	return ""
-}
-
 // ProcessWikiFinalize runs the debounced, per-KB KB-global convergence pass:
-// index-intro rebuild, dead-link cleanup, and cross-link injection. It drains
-// the finalize lane of task_pending_ops (written by ProcessWikiIngest via
-// enqueueFinalize) so a burst of documents rebuilds the index ONCE instead of
-// once per 5-doc batch.
+// exact-title page merge, index-intro rebuild, dead-link cleanup, and
+// cross-link injection. It drains the finalize lane of task_pending_ops
+// (written by ProcessWikiIngest via enqueueFinalize) so a burst of documents
+// runs KB-wide work once instead of once per 5-doc batch.
 func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Task) error {
 	startedAt := time.Now()
 	var payload WikiIngestPayload
@@ -1085,20 +1053,45 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 		synthesisModelID = kb.SummaryModelID
 	}
 	if synthesisModelID == "" {
-		// No model to rebuild the index with; still run the pure-text passes,
-		// then drain. Missing model is a config gap, not a transient error.
-		logger.Warnf(ctx, "wiki finalize: no synthesis model for KB %s, skipping index rebuild", payload.KnowledgeBaseID)
+		// Missing model is a config gap, not a transient error. Link cleanup
+		// still runs, but index and duplicate-title content merges are skipped.
+		logger.Warnf(ctx, "wiki finalize: no synthesis model for KB %s, skipping model-backed convergence", payload.KnowledgeBaseID)
 	}
 
 	batchCtx := s.newWikiBatchContext(payload.KnowledgeBaseID, kb.WikiConfig)
 	lang := types.LanguageNameFromContext(ctx)
 
-	collapsedTitlePages, canonicalSlugs, collapseErr := s.collapseDuplicateTitlePages(
-		ctx, payload.KnowledgeBaseID,
-	)
-	if collapseErr != nil {
-		logger.Warnf(ctx, "wiki finalize: collapse duplicate titles failed: %v", collapseErr)
-	} else {
+	var allPages []*types.WikiPage
+	var duplicateGroups []duplicateTitleGroup
+	if s.wikiService != nil {
+		allPages, err = s.wikiService.ListAllPages(ctx, payload.KnowledgeBaseID)
+		if err != nil {
+			logger.Warnf(ctx, "wiki finalize: list pages for duplicate-title merge failed: %v", err)
+		} else {
+			duplicateGroups = findDuplicateTitleGroups(allPages)
+		}
+	}
+
+	var chatModel chat.Chat
+	if s.modelService != nil && synthesisModelID != "" && (len(duplicateGroups) > 0 || changeDesc.Len() > 0) {
+		chatModel, err = s.modelService.GetChatModel(ctx, synthesisModelID)
+		if err != nil {
+			logger.Warnf(ctx, "wiki finalize: get chat model failed: %v", err)
+			chatModel = nil
+		}
+	}
+
+	collapsedTitlePages := 0
+	if len(duplicateGroups) > 0 && chatModel != nil {
+		var canonicalSlugs []string
+		var collapseErr error
+		collapsedTitlePages, canonicalSlugs, collapseErr = s.collapseDuplicateTitlePages(
+			ctx, chatModel, payload.KnowledgeBaseID, lang,
+			batchCtx.ContentInstructions, allPages, duplicateGroups,
+		)
+		if collapseErr != nil {
+			logger.Warnf(ctx, "wiki finalize: collapse duplicate titles failed: %v", collapseErr)
+		}
 		for _, slug := range canonicalSlugs {
 			if _, ok := affectedSet[slug]; ok {
 				continue
@@ -1109,11 +1102,8 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	}
 
 	indexRebuilt := false
-	if changeDesc.Len() > 0 && synthesisModelID != "" {
-		chatModel, mErr := s.modelService.GetChatModel(ctx, synthesisModelID)
-		if mErr != nil {
-			logger.Warnf(ctx, "wiki finalize: get chat model failed: %v", mErr)
-		} else if err := s.rebuildIndexPage(ctx, chatModel, payload, changeDesc.String(), lang,
+	if changeDesc.Len() > 0 && chatModel != nil {
+		if err := s.rebuildIndexPage(ctx, chatModel, payload, changeDesc.String(), lang,
 			batchCtx.ContentInstructions); err != nil {
 			logger.Warnf(ctx, "wiki finalize: rebuild index failed: %v", err)
 		} else {
@@ -1413,10 +1403,6 @@ func (s *wikiIngestService) mapOneDocument(
 	// citations simply keep their Description+Details fallback).
 	var uncited int
 	extractedEntities, extractedConcepts, uncited = mergeCitationsIntoItems(extractedEntities, extractedConcepts, citations, newSlugs)
-	extractedEntities, extractedConcepts = s.collapseExtractedByTitle(
-		ctx, payload.KnowledgeBaseID, extractedEntities, extractedConcepts,
-	)
-
 	// Rebuild slugItems so stale entries (for slugs that did not survive the
 	// merge) and brand-new slugs discovered by the citation pass are both
 	// reflected in summaryExtractedPages tracking.
@@ -1689,10 +1675,6 @@ func (s *wikiIngestService) extractEntitiesAndConceptsNoUpsert(
 		logger.Warnf(ctx, "wiki ingest: failed to parse combined extraction JSON: %v\nRaw: %s", err, extractionJSON)
 		return nil, nil, nil, fmt.Errorf("parse combined extraction JSON: %w", err)
 	}
-
-	result.Entities, result.Concepts = s.collapseExtractedByTitle(
-		ctx, kbID, result.Entities, result.Concepts,
-	)
 
 	// Dedup pre-filter is dispatched against the wiki page repo via
 	// pg_trgm (see deduplicateExtractedBatch). Until the trgm path

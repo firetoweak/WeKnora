@@ -510,6 +510,25 @@ If no items match any existing pages, return: {"merges": {}}
 Output ONLY valid JSON. Example:
 {"merges": {"entity/acme-corporation": "entity/acme-corp", "concept/rag": "concept/retrieval-augmented-generation"}}`
 
+// WikiExactTitleMergePrompt reconciles already-generated pages whose titles
+// are exactly equal after case and whitespace normalization.
+const WikiExactTitleMergePrompt = `You are merging wiki pages that have the same title. They may come from different documents and may contain complementary or conflicting claims.
+
+<duplicate_pages>
+{{.Pages}}
+</duplicate_pages>
+
+<instructions>
+1. Produce one self-contained wiki page in {{.Language}}. Preserve every useful, source-grounded fact from all inputs without unnecessary repetition.
+2. Do not silently choose one side when sources conflict. State each conflicting claim clearly and attach its source refs inline, for example: "(Sources: doc-a, doc-b)".
+3. Keep compatible details together and preserve useful wiki links. Never invent facts, source refs, or links.
+4. Do not discuss the merge operation, duplicate pages, or these instructions.
+5. The first line must be exactly "SUMMARY: " followed by a concise one-line summary.
+6. After the first line, output only the merged Markdown body.
+</instructions>
+
+Output the summary line and merged Markdown only.`
+
 // Granularity guidance blocks injected into WikiCandidateSlugPrompt. The
 // pipeline resolves a KnowledgeBase's configured granularity to one of these
 // strings via WikiGranularityGuidance().

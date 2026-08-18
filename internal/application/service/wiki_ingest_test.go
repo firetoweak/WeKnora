@@ -335,6 +335,7 @@ func TestGenerateWithTemplateMasksImageURLsBeforeLLM(t *testing.T) {
 }
 
 type templateCaptureChatModel struct {
+	calls    int
 	prompt   string
 	response string
 	messages []chat.Message
@@ -348,6 +349,7 @@ func (m *templateCaptureChatModel) Chat(
 	messages []chat.Message,
 	opts *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
+	m.calls++
 	if len(messages) > 0 {
 		m.prompt = messages[0].Content
 	}

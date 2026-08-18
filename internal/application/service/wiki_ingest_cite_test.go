@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"sort"
 	"testing"
 
@@ -116,36 +115,6 @@ func TestMergeCitationsIntoItems_AddsNewSlugsAndUnionsChunksAcrossBatches(t *tes
 	newC := findBySlug(gotC, "concept/new-concept")
 	if newC == nil || !equalStrings(newC.SourceChunks, []string{"c010"}) {
 		t.Errorf("concept/new-concept missing or wrong chunks: %+v", newC)
-	}
-}
-
-func TestMergeCitationsIntoItems_NewSlugsCollapseByTitle(t *testing.T) {
-	newSlugs := []newSlugFromCitation{
-		{
-			Type:         "entity",
-			Name:         "Acme",
-			Slug:         "entity/acme-one",
-			SourceChunks: []string{"c1"},
-		},
-		{
-			Type:         "entity",
-			Name:         " acme ",
-			Slug:         "entity/acme-two",
-			SourceChunks: []string{"c2"},
-		},
-	}
-
-	entities, concepts, _ := mergeCitationsIntoItems(nil, nil, nil, newSlugs)
-	svc := &wikiIngestService{wikiService: &exactTitleWikiService{}}
-	entities, concepts = svc.collapseExtractedByTitle(
-		context.Background(), "kb-1", entities, concepts,
-	)
-
-	if len(entities) != 1 || len(concepts) != 0 {
-		t.Fatalf("got entities=%d concepts=%d, want one entity", len(entities), len(concepts))
-	}
-	if !equalStrings(entities[0].SourceChunks, []string{"c1", "c2"}) {
-		t.Fatalf("source chunks were not merged: %v", entities[0].SourceChunks)
 	}
 }
 
