@@ -78,7 +78,13 @@ class ModuleIntegrationTest(unittest.TestCase):
         import weknora_mcp_server
 
         client = weknora_mcp_server.WeKnoraClient("http://localhost:8080/api/v1", "test")
-        for method in ["wiki_search", "wiki_read_page", "wiki_list_source_chunks", "wiki_index_view"]:
+        for method in [
+            "wiki_search",
+            "wiki_read_page",
+            "wiki_list_source_chunks",
+            "wiki_index_view",
+            "wiki_graph",
+        ]:
             self.assertTrue(hasattr(client, method), f"WeKnoraClient missing: {method}")
             self.assertTrue(callable(getattr(client, method)), f"{method} not callable")
 
@@ -170,6 +176,42 @@ class ModuleIntegrationTest(unittest.TestCase):
         client._request.assert_called_once_with(
             "GET",
             "/knowledgebase/kb-1/wiki/source-chunks/concept/root-crack",
+        )
+
+    def test_wiki_graph_gets_query_params(self):
+        from unittest.mock import Mock
+
+        from weknora_mcp_server import WeKnoraClient
+
+        client = WeKnoraClient("http://localhost:8080/api/v1", "test")
+        client.resolve_kb_id = Mock(return_value="kb-1")
+        payload = {
+            "nodes": [{"slug": "hub", "title": "Hub", "page_type": "entity", "link_count": 3}],
+            "edges": [{"source": "hub", "target": "a"}],
+            "meta": {"mode": "overview", "total": 10, "returned": 1, "truncated": True, "source_revision": 4},
+        }
+        client._request = Mock(return_value=payload)
+
+        out = client.wiki_graph("手册库", "overview", "", 1, "", 50)
+        self.assertEqual(out, payload)
+        client._request.assert_called_once_with(
+            "GET",
+            "/knowledgebase/kb-1/wiki/graph",
+            params={"mode": "overview", "limit": 50, "depth": 1},
+        )
+
+        client._request.reset_mock()
+        client.wiki_graph("手册库", "ego", "entity/acme", 2, "entity,concept", 20)
+        client._request.assert_called_once_with(
+            "GET",
+            "/knowledgebase/kb-1/wiki/graph",
+            params={
+                "mode": "ego",
+                "limit": 20,
+                "depth": 2,
+                "center": "entity/acme",
+                "types": "entity,concept",
+            },
         )
 
     def test_pyproject_metadata(self):

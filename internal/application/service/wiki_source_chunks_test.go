@@ -89,13 +89,23 @@ func TestListSourceChunksBySlugEmptyRefs(t *testing.T) {
 		Version:    1, CreatedAt: now, UpdatedAt: now,
 	}))
 
-	svc := NewWikiPageService(repo, &stubChunkRepoForSourceChunks{}, nil, nil, nil, nil)
+	svc := NewWikiPageService(repo, &stubChunkRepoForSourceChunks{}, &stubKBForSourceRevision{rev: 9}, nil, nil, nil)
 	got, err := svc.ListSourceChunksBySlug(ctx, "kb-1", "summary/doc-a")
 	require.NoError(t, err)
 	require.Equal(t, types.WikiSourceChunksReasonNoRefs, got.Reason)
 	require.Empty(t, got.Chunks)
 	require.Equal(t, 0, got.ChunkRefCount)
 	require.Len(t, got.Sources, 1)
+	require.Equal(t, int64(9), got.SourceRevision)
+}
+
+type stubKBForSourceRevision struct {
+	interfaces.KnowledgeBaseService
+	rev int64
+}
+
+func (s *stubKBForSourceRevision) GetKnowledgeBaseByIDOnly(context.Context, string) (*types.KnowledgeBase, error) {
+	return &types.KnowledgeBase{WikiSourceRevision: s.rev}, nil
 }
 
 func TestListSourceChunksBySlugNotFound(t *testing.T) {

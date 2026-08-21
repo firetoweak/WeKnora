@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     wiki_config TEXT,
     indexing_strategy TEXT,
     creator_id VARCHAR(36),
+    wiki_source_revision INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at DATETIME
@@ -308,4 +310,20 @@ func TestCountByVectorStoreID(t *testing.T) {
 		})
 		require.NoError(t, err)
 	})
+}
+
+func TestIncrementWikiSourceRevision(t *testing.T) {
+	db := setupKBTestDB(t)
+	repo := NewKnowledgeBaseRepository(db)
+	kb := makeKB(nil)
+	require.NoError(t, db.Create(kb).Error)
+
+	ctx := context.Background()
+	require.NoError(t, repo.IncrementWikiSourceRevision(ctx, kb.ID))
+	require.NoError(t, repo.IncrementWikiSourceRevision(ctx, kb.ID))
+
+	reloaded := reloadKB(t, db, kb.ID)
+	assert.Equal(t, int64(2), reloaded.WikiSourceRevision)
+
+	require.NoError(t, repo.IncrementWikiSourceRevision(ctx, "missing-kb"))
 }

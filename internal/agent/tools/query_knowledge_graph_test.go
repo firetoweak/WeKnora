@@ -98,6 +98,10 @@ func (s *stubKnowledgeBaseService) ProcessKBDelete(context.Context, *asynq.Task)
 	return nil
 }
 
+func (s *stubKnowledgeBaseService) BumpWikiSourceRevision(context.Context, string) error {
+	return nil
+}
+
 func TestQueryKnowledgeGraph_ReportsConfiguredEntityAndRelationTypes(t *testing.T) {
 	tool := NewQueryKnowledgeGraphTool(&stubKnowledgeBaseService{
 		kb: &types.KnowledgeBase{

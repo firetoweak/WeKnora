@@ -632,7 +632,8 @@ class WeKnoraClient:
 
     def wiki_read_page(self, kb_id: str, slug: str) -> Dict:
         """Read a wiki page by slug, returns full markdown + metadata + links"""
-        return self._request("GET", f"/knowledgebase/{kb_id}/wiki/pages/{slug}")
+        resolved = self.resolve_kb_id(kb_id)
+        return self._request("GET", f"/knowledgebase/{resolved}/wiki/pages/{slug}")
 
     def wiki_list_source_chunks(self, kb_id: str, slug: str) -> Dict:
         """List every original document chunk cited by a wiki page."""
@@ -644,11 +645,38 @@ class WeKnoraClient:
 
     def wiki_index_view(self, kb_id: str, limit: int = 50) -> Dict:
         """Get structured wiki index with per-type directory groups"""
+        resolved = self.resolve_kb_id(kb_id)
         return self._request(
             "GET",
-            f"/knowledgebase/{kb_id}/wiki/index",
+            f"/knowledgebase/{resolved}/wiki/index",
             params={"limit": limit},
         )
+
+    def wiki_graph(
+        self,
+        kb_id: str,
+        mode: str = "overview",
+        center: str = "",
+        depth: int = 1,
+        types: str = "",
+        limit: int = 100,
+    ) -> Dict:
+        """Fetch a slice of the wiki page link graph."""
+        resolved = self.resolve_kb_id(kb_id)
+        params = {"mode": mode or "overview", "limit": limit, "depth": depth}
+        if isinstance(center, str) and center.strip():
+            params["center"] = center.strip()
+        if isinstance(types, str) and types.strip():
+            params["types"] = types.strip()
+        payload = self._request(
+            "GET",
+            f"/knowledgebase/{resolved}/wiki/graph",
+            params=params,
+        )
+        data = self._response_data(payload)
+        if isinstance(data, dict):
+            return data
+        return payload
 
     def wiki_log(self, kb_id: str, limit: int = 200) -> Dict:
         """Get the newest Wiki ingest/retract events for a knowledge base."""
@@ -1157,7 +1185,8 @@ def wiki_list_source_chunks(kb_id: str, slug: str) -> dict:
     text behind a knowledge point. Returns the page identity, source documents,
     and all chunk_refs expanded to full chunk content (not a whole-document
     scan). Summary pages and pages with no citations return chunks=[] with
-    reason=no_chunk_refs. slug example: 'entity/acme-corp', 'concept/rag'.
+    reason=no_chunk_refs. Also returns source_revision for stale-analysis checks.
+    slug example: 'entity/acme-corp', 'concept/rag'.
     kb_id may be a UUID or a knowledge-base name.
     """
     return client.wiki_list_source_chunks(kb_id, slug)
@@ -1168,9 +1197,34 @@ def wiki_index_view(kb_id: str, limit: int = 50) -> dict:
     """Get a structured wiki index with per-type directory groups.
 
     Returns an overview of all wiki pages organized by type (entity, concept,
-    summary, etc.).
+    summary, etc.), plus source_revision for stale-analysis checks.
+    kb_id may be a UUID or a knowledge-base name.
     """
     return client.wiki_index_view(kb_id, limit)
+
+
+@mcp.tool()
+def wiki_graph(
+    kb_id: str,
+    mode: str = "overview",
+    center: str = "",
+    depth: int = 1,
+    types: str = "",
+    limit: int = 100,
+) -> dict:
+    """Get a slice of the wiki page link graph (not the entity knowledge graph).
+
+    Returns {nodes, edges, meta}. Nodes include slug, title, page_type,
+    link_count, and a short preview. meta.truncated is true when the slice
+    is smaller than the full graph; meta.source_revision is the KB-level
+    fingerprint for stale-analysis checks.
+
+    mode=overview (default) returns the most-connected pages.
+    mode=ego returns the neighborhood around center (required) up to depth hops.
+    types is an optional comma-separated page_type allow-list.
+    kb_id may be a UUID or a knowledge-base name.
+    """
+    return client.wiki_graph(kb_id, mode, center, depth, types, limit)
 
 
 @mcp.tool()

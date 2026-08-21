@@ -110,6 +110,9 @@ func (s *processSyncKBService) GetRepository() interfaces.KnowledgeBaseRepositor
 func (s *processSyncKBService) ProcessKBDelete(context.Context, *asynq.Task) error {
 	return nil
 }
+func (s *processSyncKBService) BumpWikiSourceRevision(context.Context, string) error {
+	return nil
+}
 
 var _ interfaces.KnowledgeBaseService = (*processSyncKBService)(nil)
 

@@ -69,6 +69,54 @@ func NewWikiPageService(
 	}
 }
 
+type wikiSourceRevisionSilentKey struct{}
+
+// withoutWikiSourceRevisionBump suppresses per-page revision bumps so a
+// batch (ingest / finalize) can advance the fingerprint once at the end
+// instead of locking the knowledge_bases row on every page write.
+func withoutWikiSourceRevisionBump(ctx context.Context) context.Context {
+	return context.WithValue(ctx, wikiSourceRevisionSilentKey{}, true)
+}
+
+func wikiSourceRevisionSilent(ctx context.Context) bool {
+	v, _ := ctx.Value(wikiSourceRevisionSilentKey{}).(bool)
+	return v
+}
+
+func (s *wikiPageService) bumpWikiSourceRevision(ctx context.Context, kbID string) {
+	if wikiSourceRevisionSilent(ctx) || s.kbService == nil || kbID == "" {
+		return
+	}
+	if err := s.kbService.BumpWikiSourceRevision(ctx, kbID); err != nil {
+		logger.Warnf(ctx, "bump wiki source_revision for %s: %v", kbID, err)
+	}
+}
+
+func (s *wikiPageService) wikiSourceRevision(ctx context.Context, kbID string) int64 {
+	if s.kbService == nil || kbID == "" {
+		return 0
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByIDOnly(ctx, kbID)
+	if err != nil || kb == nil {
+		return 0
+	}
+	return kb.WikiSourceRevision
+}
+
+const wikiGraphPreviewMaxRunes = 160
+
+func wikiGraphPreview(summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return ""
+	}
+	runes := []rune(summary)
+	if len(runes) <= wikiGraphPreviewMaxRunes {
+		return summary
+	}
+	return string(runes[:wikiGraphPreviewMaxRunes]) + "..."
+}
+
 // CreatePage creates a new wiki page
 func (s *wikiPageService) CreatePage(ctx context.Context, page *types.WikiPage) (*types.WikiPage, error) {
 	if page.ID == "" {
@@ -108,6 +156,7 @@ func (s *wikiPageService) CreatePage(ctx context.Context, page *types.WikiPage) 
 	// Update inbound links on target pages
 	s.updateInLinks(ctx, page.KnowledgeBaseID, page.Slug, page.OutLinks)
 
+	s.bumpWikiSourceRevision(ctx, page.KnowledgeBaseID)
 	return page, nil
 }
 
@@ -196,6 +245,9 @@ func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) 
 	s.removeInLinks(ctx, existing.KnowledgeBaseID, existing.Slug, oldOutLinks)
 	s.updateInLinks(ctx, existing.KnowledgeBaseID, existing.Slug, existing.OutLinks)
 
+	if contentChanged {
+		s.bumpWikiSourceRevision(ctx, existing.KnowledgeBaseID)
+	}
 	return existing, nil
 }
 
@@ -422,6 +474,7 @@ func (s *wikiPageService) DeletePage(ctx context.Context, kbID string, slug stri
 	// Delete synced chunk
 	s.deleteChunkForPage(ctx, page)
 
+	s.bumpWikiSourceRevision(ctx, kbID)
 	return nil
 }
 
@@ -541,9 +594,10 @@ func (s *wikiPageService) GetIndexView(
 	}
 
 	return &types.WikiIndexResponse{
-		Intro:   intro,
-		Version: indexPage.Version,
-		Groups:  groups,
+		Intro:          intro,
+		Version:        indexPage.Version,
+		SourceRevision: s.wikiSourceRevision(ctx, kbID),
+		Groups:         groups,
 	}, nil
 }
 
@@ -585,7 +639,14 @@ func (s *wikiPageService) GetGraph(ctx context.Context, req *types.WikiGraphRequ
 	if err != nil {
 		return nil, err
 	}
-	return computeGraphSubset(pages, req)
+	data, err := computeGraphSubset(pages, req)
+	if err != nil {
+		return nil, err
+	}
+	if data != nil {
+		data.Meta.SourceRevision = s.wikiSourceRevision(ctx, req.KnowledgeBaseID)
+	}
+	return data, nil
 }
 
 // computeGraphSubset is the pure I/O-free core of GetGraph. It takes the
@@ -667,6 +728,7 @@ func computeGraphSubset(pages []*types.WikiPage, req *types.WikiGraphRequest) (*
 			Title:     p.Title,
 			PageType:  p.PageType,
 			LinkCount: linkCount[slug],
+			Preview:   wikiGraphPreview(p.Summary),
 		})
 	}
 	// Deterministic node ordering — the map iteration above is random.

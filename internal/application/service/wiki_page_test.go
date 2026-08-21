@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -346,6 +347,7 @@ func makeGraphFixture() []*types.WikiPage {
 			Slug:     "hub",
 			Title:    "Hub",
 			PageType: types.WikiPageTypeSummary,
+			Summary:  "Hub summary for the graph",
 			OutLinks: types.StringArray{"a", "b", "c", "d"},
 			InLinks:  types.StringArray{"a", "b"},
 		},
@@ -573,5 +575,37 @@ func TestComputeGraphSubset_EgoRejectsMissingCenter(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error for missing center slug")
+	}
+}
+
+func TestComputeGraphSubset_IncludesPreview(t *testing.T) {
+	pages := makeGraphFixture()
+	got, err := computeGraphSubset(pages, &types.WikiGraphRequest{
+		Mode:  types.WikiGraphModeOverview,
+		Limit: 3,
+	})
+	if err != nil {
+		t.Fatalf("computeGraphSubset: %v", err)
+	}
+	for _, n := range got.Nodes {
+		if n.Slug == "hub" {
+			if n.Preview != "Hub summary for the graph" {
+				t.Fatalf("hub preview = %q", n.Preview)
+			}
+			return
+		}
+	}
+	t.Fatal("hub node missing")
+}
+
+func TestWikiGraphPreviewTruncates(t *testing.T) {
+	if got := wikiGraphPreview("  short  "); got != "short" {
+		t.Fatalf("trim: got %q", got)
+	}
+	long := strings.Repeat("字", wikiGraphPreviewMaxRunes+8)
+	got := wikiGraphPreview(long)
+	wantRunes := wikiGraphPreviewMaxRunes + len([]rune("..."))
+	if len([]rune(got)) != wantRunes {
+		t.Fatalf("truncated len = %d, want %d", len([]rune(got)), wantRunes)
 	}
 }

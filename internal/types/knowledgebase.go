@@ -114,6 +114,12 @@ type KnowledgeBase struct {
 	// IndexingStrategy controls which indexing pipelines are active for this knowledge base.
 	// Pipelines: vector search, keyword search, wiki generation, knowledge graph extraction.
 	IndexingStrategy IndexingStrategy `yaml:"indexing_strategy"       json:"indexing_strategy"       gorm:"column:indexing_strategy;type:json"`
+	// WikiSourceRevision is a monotonic KB-level fingerprint of Wiki source
+	// material. MCP wiki tools echo it so callers can tell whether a cached
+	// analysis is stale. It advances on wiki ingest/finalize, wiki page
+	// content writes, and original chunk body edits — not on bookkeeping-only
+	// link decoration. Independent of wiki_pages.version (the index intro).
+	WikiSourceRevision int64 `yaml:"wiki_source_revision" json:"wiki_source_revision" gorm:"column:wiki_source_revision;not null;default:0"`
 	// IsPinned and PinnedAt are computed per-caller from user_kb_pins
 	// (see migration 000050). They used to be stored on the row itself,
 	// which made pinning a workspace-wide ordering decision gated behind

@@ -77,10 +77,11 @@ export interface WikiGraphMeta {
   truncated: boolean;
   center?: string;
   depth?: number;
+  source_revision?: number;
 }
 
 export interface WikiGraphData {
-  nodes: { slug: string; title: string; page_type: string; link_count: number }[];
+  nodes: { slug: string; title: string; page_type: string; link_count: number; preview?: string }[];
   edges: { source: string; target: string }[];
   meta: WikiGraphMeta;
 }
@@ -201,6 +202,7 @@ export interface WikiPageSourceChunksResult {
   chunk_ref_count: number;
   missing_count?: number;
   reason?: string;
+  source_revision?: number;
 }
 
 // listWikiSourceChunks expands a page's chunk_refs into the full original
@@ -302,6 +304,7 @@ export interface WikiIndexGroup {
 export interface WikiIndexResponse {
   intro: string;
   version: number;
+  source_revision?: number;
   groups: WikiIndexGroup[];
 }
 

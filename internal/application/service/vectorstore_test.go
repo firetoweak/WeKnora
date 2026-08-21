@@ -847,6 +847,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
 		storage_backend_id VARCHAR(36),
     wiki_config TEXT,
     indexing_strategy TEXT,
+    wiki_source_revision INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at DATETIME
@@ -961,6 +962,9 @@ func (r *realKBRepo) ListUserKBPinIDs(_ context.Context, _ uint64, _ string) (ma
 }
 func (r *realKBRepo) SetUserKBPin(_ context.Context, _ uint64, _ string, _ string, _ bool) (*time.Time, error) {
 	return nil, nil
+}
+func (r *realKBRepo) IncrementWikiSourceRevision(_ context.Context, _ string) error {
+	return nil
 }
 
 func insertGuardStore(t *testing.T, db *gorm.DB, id string, tenantID uint64) {

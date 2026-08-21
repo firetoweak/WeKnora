@@ -50,6 +50,9 @@ func (s *stubKBRepoForModelDelete) SetUserKBPin(context.Context, uint64, string,
 func (s *stubKBRepoForModelDelete) ListUserKBPinIDs(context.Context, uint64, string) (map[string]time.Time, error) {
 	return nil, nil
 }
+func (s *stubKBRepoForModelDelete) IncrementWikiSourceRevision(context.Context, string) error {
+	return nil
+}
 
 type stubAgentRepoForModelDelete struct {
 	count int64

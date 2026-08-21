@@ -84,6 +84,7 @@ type WikiPageSourceChunksResult struct {
 	ChunkRefCount   int                   `json:"chunk_ref_count"`
 	MissingCount    int                   `json:"missing_count,omitempty"`
 	Reason          string                `json:"reason,omitempty"`
+	SourceRevision  int64                 `json:"source_revision"`
 }
 
 // WikiPageSourceChunk is one cited original chunk for a wiki page.

@@ -136,6 +136,10 @@ type KnowledgeBaseService interface {
 	// Returns:
 	//   - Possible errors during deletion
 	ProcessKBDelete(ctx context.Context, t *asynq.Task) error
+
+	// BumpWikiSourceRevision atomically increments KnowledgeBase.WikiSourceRevision.
+	// Best-effort for callers that log-and-continue: an empty kbID is a no-op.
+	BumpWikiSourceRevision(ctx context.Context, kbID string) error
 }
 
 // KnowledgeBaseRepository defines the knowledge base repository interface
@@ -241,4 +245,9 @@ type KnowledgeBaseRepository interface {
 	ListUserKBPinIDs(
 		ctx context.Context, tenantID uint64, userID string,
 	) (map[string]time.Time, error)
+
+	// IncrementWikiSourceRevision atomically adds 1 to wiki_source_revision
+	// for the given KB. Missing rows are a no-op (RowsAffected=0, no error)
+	// so callers do not have to exist-check first.
+	IncrementWikiSourceRevision(ctx context.Context, kbID string) error
 }

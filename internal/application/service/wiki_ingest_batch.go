@@ -64,6 +64,15 @@ func (s *wikiIngestService) scheduleFollowUp(ctx context.Context, payload WikiIn
 	return true
 }
 
+func (s *wikiIngestService) bumpWikiSourceRevision(ctx context.Context, kbID string) {
+	if s.kbService == nil || kbID == "" {
+		return
+	}
+	if err := s.kbService.BumpWikiSourceRevision(ctx, kbID); err != nil {
+		logger.Warnf(ctx, "bump wiki source_revision for %s: %v", kbID, err)
+	}
+}
+
 // newWikiBatchContext builds the per-run lazy fetchers used by both the ingest
 // batch and the debounced finalize task. These replace the legacy pre-batch
 // ListAllPages dump: instead of pulling ~100MB of rows up front (and walking
@@ -253,6 +262,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
+	ctx = withoutWikiSourceRevisionBump(ctx)
 
 	// Concurrency model (Phase 3):
 	//
@@ -714,6 +724,13 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		}
 	}
 	RecordWikiContentActivity(tailCtx, s.audit, payload.TenantID, payload.KnowledgeBaseID, wikiActivityActions)
+	activityCount := 0
+	for _, n := range wikiActivityActions {
+		activityCount += n
+	}
+	if activityCount > 0 {
+		s.bumpWikiSourceRevision(tailCtx, payload.KnowledgeBaseID)
+	}
 
 	// Publish freshly-generated pages immediately (NOT deferred to finalize):
 	// users should see a document's wiki pages as soon as their content is
@@ -920,6 +937,7 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	if payload.Language != "" {
 		ctx = context.WithValue(ctx, types.LanguageContextKey, payload.Language)
 	}
+	ctx = withoutWikiSourceRevisionBump(ctx)
 	if s.pendingRepo == nil {
 		return nil
 	}
@@ -1184,6 +1202,7 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 		payload.KnowledgeBaseID, len(rows), len(affectedSlugs), collapsedTitlePages, deletedFolders, pruneDeferred, indexRebuilt, rescheduled,
 		time.Since(startedAt).Round(time.Millisecond),
 	)
+	s.bumpWikiSourceRevision(ctx, payload.KnowledgeBaseID)
 	return nil
 }
 

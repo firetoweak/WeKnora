@@ -43,6 +43,7 @@ func (s *wikiPageService) ListSourceChunksBySlug(
 	if page.KnowledgeBaseID == "" {
 		out.KnowledgeBaseID = kbID
 	}
+	out.SourceRevision = s.wikiSourceRevision(ctx, out.KnowledgeBaseID)
 	if len(refs) == 0 {
 		out.Reason = types.WikiSourceChunksReasonNoRefs
 		return out, nil

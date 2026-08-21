@@ -463,6 +463,11 @@ func (s *chunkService) UpdateDocumentChunk(
 	if err := s.chunkRepository.SaveChunkRevision(ctx, chunk, revision, oldRevision); err != nil {
 		return nil, err
 	}
+	if bodyChanged && s.kbRepository != nil && chunk.KnowledgeBaseID != "" {
+		if err := s.kbRepository.IncrementWikiSourceRevision(ctx, chunk.KnowledgeBaseID); err != nil {
+			logger.Warnf(ctx, "bump wiki source_revision after chunk edit %s: %v", chunk.ID, err)
+		}
+	}
 
 	if bodyChanged && chunk.ParentChunkID != "" {
 		if err := s.rebuildParentContent(ctx, chunk); err != nil {

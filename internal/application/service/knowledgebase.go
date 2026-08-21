@@ -104,6 +104,15 @@ func (s *knowledgeBaseService) GetRepository() interfaces.KnowledgeBaseRepositor
 	return s.repo
 }
 
+// BumpWikiSourceRevision atomically increments the KB-level Wiki source
+// fingerprint used by MCP wiki tools to detect stale analyses.
+func (s *knowledgeBaseService) BumpWikiSourceRevision(ctx context.Context, kbID string) error {
+	if s.repo == nil || kbID == "" {
+		return nil
+	}
+	return s.repo.IncrementWikiSourceRevision(ctx, kbID)
+}
+
 // CreateKnowledgeBase creates a new knowledge base.
 //
 // When VectorStoreID is set, the binding is validated against the caller's

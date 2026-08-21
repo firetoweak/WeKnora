@@ -131,6 +131,9 @@ func (r *fakeKBRepo) SetUserKBPin(_ context.Context, _ uint64, _ string, _ strin
 func (r *fakeKBRepo) ListUserKBPinIDs(_ context.Context, _ uint64, _ string) (map[string]time.Time, error) {
 	return map[string]time.Time{}, nil
 }
+func (r *fakeKBRepo) IncrementWikiSourceRevision(_ context.Context, _ string) error {
+	return nil
+}
 
 // Force compile-time conformance check so any future interface change
 // surfaces as a build error here rather than at usage site.

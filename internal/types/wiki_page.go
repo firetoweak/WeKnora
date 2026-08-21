@@ -669,12 +669,13 @@ type WikiGraphData struct {
 // knowledge base graph. The frontend uses `Truncated` to decide whether to
 // surface a "showing X of Y" hint and to enable ego-expansion UI.
 type WikiGraphMeta struct {
-	Mode      string `json:"mode"`
-	Total     int    `json:"total"`            // total node count in the KB before filtering/limit
-	Returned  int    `json:"returned"`         // number of nodes actually returned
-	Truncated bool   `json:"truncated"`        // true when Returned < Total (after filters)
-	Center    string `json:"center,omitempty"` // populated in ego mode
-	Depth     int    `json:"depth,omitempty"`  // populated in ego mode
+	Mode           string `json:"mode"`
+	Total          int    `json:"total"`            // total node count in the KB before filtering/limit
+	Returned       int    `json:"returned"`         // number of nodes actually returned
+	Truncated      bool   `json:"truncated"`        // true when Returned < Total (after filters)
+	Center         string `json:"center,omitempty"` // populated in ego mode
+	Depth          int    `json:"depth,omitempty"`  // populated in ego mode
+	SourceRevision int64  `json:"source_revision"`  // KB-level Wiki source fingerprint
 }
 
 // WikiGraphNode represents a node in the wiki link graph
@@ -684,6 +685,8 @@ type WikiGraphNode struct {
 	PageType string `json:"page_type"`
 	// Number of inbound + outbound links
 	LinkCount int `json:"link_count"`
+	// Preview is a short excerpt of the page summary for graph UIs.
+	Preview string `json:"preview,omitempty"`
 }
 
 // WikiGraphEdge represents a directed edge in the wiki link graph
@@ -758,9 +761,10 @@ type WikiIndexGroup struct {
 // from the index repo's light-column projection, keeping index reads
 // O(page_size) regardless of KB size.
 type WikiIndexResponse struct {
-	Intro   string           `json:"intro"`
-	Version int              `json:"version"`
-	Groups  []WikiIndexGroup `json:"groups"`
+	Intro          string           `json:"intro"`
+	Version        int              `json:"version"`
+	SourceRevision int64            `json:"source_revision"`
+	Groups         []WikiIndexGroup `json:"groups"`
 }
 
 // WikiPageLite is a slim projection of WikiPage carrying only the fields

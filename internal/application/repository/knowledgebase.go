@@ -172,6 +172,19 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBase(ctx context.Context, kb *t
 	return r.db.WithContext(ctx).Save(kb).Error
 }
 
+// IncrementWikiSourceRevision atomically advances the KB-level Wiki source
+// fingerprint. UpdateColumn keeps this off the UpdatedAt / full-row Save
+// path so a wiki write does not look like a KB settings change.
+func (r *knowledgeBaseRepository) IncrementWikiSourceRevision(ctx context.Context, kbID string) error {
+	if kbID == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Model(&types.KnowledgeBase{}).
+		Where("id = ?", kbID).
+		UpdateColumn("wiki_source_revision", gorm.Expr("wiki_source_revision + 1")).Error
+}
+
 // DeleteKnowledgeBase deletes a knowledge base
 func (r *knowledgeBaseRepository) DeleteKnowledgeBase(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.KnowledgeBase{}).Error

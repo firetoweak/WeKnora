@@ -147,10 +147,11 @@ python test_module.py
 
 ### Wiki 查询
 - `get_wiki_build_status` - 返回文档解析/Wiki 构建状态及机器可读的 `ready` 标记
-- `wiki_index_view` - 获取 Wiki 目录与版本
+- `wiki_index_view` - 获取 Wiki 目录与版本（含 `source_revision`）
 - `wiki_search` - 按问题关联相关叶子知识点
 - `wiki_read_page` - 读取 Wiki 页面
-- `wiki_list_source_chunks` - 列出知识点关联的全部原文分块
+- `wiki_list_source_chunks` - 列出知识点关联的全部原文分块（含 `source_revision`）
+- `wiki_graph` - 获取 Wiki 页面关系图（`nodes` / `edges` / `meta`，含是否截断与 `source_revision`）
 
 ## 故障排除
 

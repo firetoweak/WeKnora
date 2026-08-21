@@ -357,7 +357,9 @@ curl -X DELETE $BASE/api/v1/knowledgebase/kb-1/wiki/folders/f-1 -H "Authorizatio
 
 用途：Wiki 索引页（按类型分组窗口）。查询参数：`types`（逗号分隔）、`limit`（1-200，默认 50）、`cursor`（游标）。
 
-响应：200 `WikiIndexResponse`
+响应：200 `WikiIndexResponse`（`intro`、`version`、`source_revision`、`groups`）
+
+`version` 是 index 页 intro 的用户可见修订号。`source_revision` 是知识库级素材指纹：wiki ingest/finalize、wiki 正文写入、原文 chunk 编辑时前进，用来判断分析结果是否过期。
 
 ```bash
 curl $BASE/api/v1/knowledgebase/kb-1/wiki/index -H "Authorization: Bearer $TOKEN"
@@ -379,7 +381,9 @@ curl $BASE/api/v1/knowledgebase/kb-1/wiki/index -H "Authorization: Bearer $TOKEN
 | `types` | string | 否 | page_type 过滤 |
 | `limit` | int | 否 | 默认 500，上限 2000 |
 
-响应：200 `WikiGraphData`
+响应：200 `WikiGraphData`（`nodes` / `edges` / `meta`）
+
+节点含 `slug`、`title`、`page_type`、`link_count`、可选短 `preview`。`meta.truncated` 表示是否截断；`meta.source_revision` 与 index / source-chunks 同一枚库级指纹。
 
 ```bash
 curl "$BASE/api/v1/knowledgebase/kb-1/wiki/graph?mode=overview" -H "Authorization: Bearer $TOKEN"
@@ -427,7 +431,8 @@ curl "$BASE/api/v1/knowledgebase/kb-1/wiki/search?q=部署" -H "Authorization: B
       "content": "原文……"
     }
   ],
-  "chunk_ref_count": 1
+  "chunk_ref_count": 1,
+  "source_revision": 4
 }
 ```
 

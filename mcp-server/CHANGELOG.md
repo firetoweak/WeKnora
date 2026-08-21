@@ -10,6 +10,8 @@
 ### 新增
 - 新增 `create_knowledge_from_text` 工具：通过手动 Markdown 文本创建知识条目，调用既有 `/knowledge-bases/{id}/knowledge/manual` 接口，补齐 #323 中"文本"部分。默认 `status="publish"`，创建后即进入解析/索引流程、可被检索；可传 `status="draft"` 仅保存不索引。
 - README 工具清单补列既有的 `create_knowledge_from_file`。
+- 新增 `wiki_graph` 工具：透传 `GET /wiki/graph`，返回页面互链图 `{nodes, edges, meta}`（含截断标记与 `source_revision`）。
+- `wiki_index_view` / `wiki_list_source_chunks` / `wiki_graph` 回传库级 `source_revision`，用于判断分析结果是否过期（与 index 页 `version` 无关）。
 
 ## [1.1.1] - 2026-07-30
 
